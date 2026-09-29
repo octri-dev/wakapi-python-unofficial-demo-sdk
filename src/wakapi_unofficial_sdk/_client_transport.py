@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import random
 import time
 import uuid
@@ -97,6 +98,19 @@ def _strip_none(params: dict[str, Any] | None) -> dict[str, Any] | None:
     return {k: v for k, v in params.items() if v is not None}
 
 
+# One JSON record per line; a JSON text sequence also starts each with RS.
+_JSON_SEQUENCE_MEDIA_TYPES = frozenset(
+    {
+        "application/x-ndjson",
+        "application/ndjson",
+        "application/jsonl",
+        "application/json-lines",
+        "application/x-jsonlines",
+        "application/json-seq",
+    }
+)
+
+
 def _body_kwargs(
     content_type: str,
     body_json: Any,
@@ -150,6 +164,12 @@ def _body_kwargs(
             if boundary_type:
                 headers["Content-Type"] = boundary_type
         return {"content": payload}
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type in _JSON_SEQUENCE_MEDIA_TYPES:
+        separator = "\x1e" if media_type == "application/json-seq" else ""
+        records = body_json if isinstance(body_json, list) else [body_json]
+        text = "".join(separator + _json.dumps(_wire_json(record)) + "\n" for record in records)
+        return {"content": text.encode("utf-8")}
     return {"json": _wire_json(body_json)}
 
 
@@ -294,9 +314,10 @@ async def sdk_request(
     for attempt in range(1, retry.max_attempts + 1):
         headers: dict[str, str] = {}
         extra_query: dict[str, str] = {}
-        await _apply_auth(cfg, headers, extra_query, operation_id)
         if extra_headers:
             headers.update(extra_headers)
+        # After the operation's headers, so an apiKey cookie joins its cookies.
+        await _apply_auth(cfg, headers, extra_query, operation_id)
         headers.update(options.get("headers", {}))
         if has_body and not content_type.startswith("multipart/form-data"):
             # multipart: httpx sets Content-Type (with boundary) from files/data.
@@ -484,9 +505,10 @@ def sdk_request_sync(
     for attempt in range(1, retry.max_attempts + 1):
         headers: dict[str, str] = {}
         extra_query: dict[str, str] = {}
-        _apply_auth_sync(cfg, headers, extra_query, operation_id)
         if extra_headers:
             headers.update(extra_headers)
+        # After the operation's headers, so an apiKey cookie joins its cookies.
+        _apply_auth_sync(cfg, headers, extra_query, operation_id)
         headers.update(options.get("headers", {}))
         if has_body and not content_type.startswith("multipart/form-data"):
             # multipart: httpx sets Content-Type (with boundary) from files/data.

@@ -126,12 +126,54 @@ def serialize_query(
     return result
 
 
-def serialize_headers(values: dict[str, Any]) -> dict[str, str]:
+def _simple_value(value: Any, explode: bool = False) -> str:
+    """A `simple`-style value: array items, or object members, joined by commas."""
+    if isinstance(value, (list, tuple)):
+        return ",".join(_wire_scalar(item) for item in value)
+    if isinstance(value, dict):
+        separator = "=" if explode else ","
+        return ",".join(
+            f"{key}{separator}{_wire_scalar(member)}"
+            for key, member in value.items()
+            if member is not None
+        )
+    return _wire_scalar(value)
+
+
+def serialize_headers(values: dict[str, Any], exploded: Sequence[str] = ()) -> dict[str, str]:
     return {
-        name: _wire_scalar(value)
+        name: _simple_value(value, name in exploded)
         for name, value in values.items()
         if value is not NOT_GIVEN and value is not None
     }
+
+
+def serialize_cookies(values: dict[str, Any], unexploded: Sequence[str] = ()) -> dict[str, str]:
+    """The `Cookie` header for `form`-style cookie parameters. An exploded array
+    repeats its name and an exploded object sends one pair per member."""
+    pairs: list[tuple[str, str]] = []
+    for name, value in values.items():
+        if value is NOT_GIVEN or value is None:
+            continue
+        explode = name not in unexploded
+        if explode and isinstance(value, (list, tuple)):
+            pairs.extend((name, _wire_scalar(item)) for item in value)
+        elif explode and isinstance(value, dict):
+            pairs.extend(
+                (key, _wire_scalar(member)) for key, member in value.items() if member is not None
+            )
+        else:
+            pairs.append((name, _simple_value(value)))
+    if not pairs:
+        return {}
+    return {"Cookie": "; ".join(f"{name}={quote(text, safe='')}" for name, text in pairs)}
+
+
+def json_parameter(value: Any) -> Any:
+    """A parameter declared with JSON `content` is sent as its JSON text."""
+    if value is NOT_GIVEN or value is None:
+        return value
+    return _json.dumps(_wire_json(value), ensure_ascii=False, separators=(",", ":"))
 
 
 @dataclass

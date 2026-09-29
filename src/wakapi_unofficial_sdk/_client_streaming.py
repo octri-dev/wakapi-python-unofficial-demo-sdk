@@ -66,9 +66,10 @@ async def sdk_stream(
     }.get(stream_format, "application/octet-stream")
     headers: dict[str, str] = {"Accept": accept}
     extra_query: dict[str, str] = {}
-    await _apply_auth(cfg, headers, extra_query, operation_id)
     if extra_headers:
         headers.update(extra_headers)
+    # After the operation's headers, so an apiKey cookie joins its cookies.
+    await _apply_auth(cfg, headers, extra_query, operation_id)
     if request_options:
         headers.update(request_options.get("headers", {}))
     if json is not NOT_GIVEN and not content_type.startswith("multipart/form-data"):
@@ -97,13 +98,14 @@ async def sdk_stream(
                 yield SdkStreamEvent(event="chunk", data=data, id=None, retry=None)
             return
         if stream_format == "ndjson":
+            # strip() also drops the RS that starts a JSON text sequence record.
             async for line in response.aiter_lines():
                 if line.strip():
                     if _is_stream_done(line):
                         return
                     yield SdkStreamEvent(
                         event="message",
-                        data=_parse_stream_json(line),
+                        data=_parse_stream_json(line.strip()),
                         id=None,
                         retry=None,
                     )
@@ -180,9 +182,10 @@ def sdk_stream_sync(
     }.get(stream_format, "application/octet-stream")
     headers: dict[str, str] = {"Accept": accept}
     extra_query: dict[str, str] = {}
-    _apply_auth_sync(cfg, headers, extra_query, operation_id)
     if extra_headers:
         headers.update(extra_headers)
+    # After the operation's headers, so an apiKey cookie joins its cookies.
+    _apply_auth_sync(cfg, headers, extra_query, operation_id)
     if request_options:
         headers.update(request_options.get("headers", {}))
     if json is not NOT_GIVEN and not content_type.startswith("multipart/form-data"):
@@ -211,13 +214,14 @@ def sdk_stream_sync(
                 yield SdkStreamEvent(event="chunk", data=data, id=None, retry=None)
             return
         if stream_format == "ndjson":
+            # strip() also drops the RS that starts a JSON text sequence record.
             for line in response.iter_lines():
                 if line.strip():
                     if _is_stream_done(line):
                         return
                     yield SdkStreamEvent(
                         event="message",
-                        data=_parse_stream_json(line),
+                        data=_parse_stream_json(line.strip()),
                         id=None,
                         retry=None,
                     )
